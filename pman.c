@@ -18,10 +18,12 @@
 
 #define BUFFER_SIZE 100
 
+// Global variables for linked list
 struct node *head = NULL;
 struct node *curr;
 struct node *prev;
 
+// Node for linked list
 struct node
 {
 	struct node* next;
@@ -31,6 +33,11 @@ struct node
 };
 
 
+// Inserts a new node into the linked list
+// Parameters:
+//		# data (int)		: pid of the process being added to the list
+//		# filename (char*)	: name of the file/process being added to the list
+//
 void insert(int data, char* filename)
 {
 	struct node *newNode = (struct node*) malloc(sizeof(struct node));
@@ -43,6 +50,10 @@ void insert(int data, char* filename)
 }
 
 
+// Checks if linked list contains provided pid
+// Parameters:
+//		# pid (int)		: process id of process to check for in list
+//
 bool contains(int pid)
 {
 	bool doesContain = false;
@@ -57,6 +68,10 @@ bool contains(int pid)
 }
 
 
+// Removes node with provided pid from linked list
+// Parameters:
+//		# data (int)		: process id of node to remove from linked list
+//
 void my_remove(int data)
 {
 	if (head->pid == data)
@@ -87,33 +102,29 @@ int main (int argc, char* argv[])
 	if (argc > 1)
 	{
 		puts("Too many arguments");
-		return 0;	
+		exit(1);	
 	}
-
 	else
 	{
 		while (1)
 		{	
-			int state;
-			int status;
-			// Check for terminated/zombie processes
-			
-			char cmd[BUFFER_SIZE];
-			char *token;
-			char *args[10];
-			char *command;		
+			int state, status;
+			char cmd[BUFFER_SIZE], *token, *args[10], *command;		
 	
 			printf("\nPMan: >");
 			fflush(stdout);
+
+			// Read in command
 			fgets(cmd, BUFFER_SIZE, stdin);
 			
+			// Check for zombie processes and reap them until none found
 			while ((state = waitpid(-1, &status, WNOHANG)) != 0)
 			{
 				if(state == -1)
 				{
-					//perror("Error");
 					break;
 				}
+				// if zombie process found, remove it from linked list
 				else if (state > 0)
 				{
 					printf("%d exited with status %d\n", state, WEXITSTATUS(status));
@@ -127,9 +138,11 @@ int main (int argc, char* argv[])
 				continue;
 			}			
 	
+			// parse input command...
 			token = strtok(cmd, " ");
 			
 			int i = 0;
+			// parse arguments into array
 			while (token != NULL)
 			{	
 				args[i] = token;
@@ -140,6 +153,7 @@ int main (int argc, char* argv[])
 			args[i - 1] = strtok(args[i - 1], "\n");
 			token = args[0];
 
+			// decide which command was entered and execute it
 			if (!strcmp(token, BG))
 			{
 				run_process(args[1], args + 1);
@@ -150,6 +164,7 @@ int main (int argc, char* argv[])
 			}
 			else if (!strcmp(token, BG_KILL))
 			{
+				ctrl_process(args[1], SIGCONT);
 				ctrl_process(args[1], SIGTERM);
 				printf("SIGTERM signal sent to process %s\n", args[1]);
 			}
@@ -169,14 +184,17 @@ int main (int argc, char* argv[])
 			{	
 				printf("%s: command not found\n", token);
 			}
-			
-
 		}
 	}
 	return 1;
 }
 
 
+// Creates new process and runs provided file on it
+// Parameters:
+//		# filename (char*)	: path to file to run on new process
+//		# argv[] (char*)	: list of arguments to pass to file to run
+//
 int run_process(char *filename, char* argv[]){
 	
 	if (filename == NULL)
@@ -196,6 +214,7 @@ int run_process(char *filename, char* argv[]){
 			if (execvp(filename, argv) < 1)
 			{
 				puts("error when executing file");
+				raise(SIGTERM);
 			}
 		}
 		else
@@ -207,6 +226,11 @@ int run_process(char *filename, char* argv[]){
 } 
 
 
+// Sends a provided signal to a process
+// Parameters: 
+//		# pid_s (char*)		: string containing process id of provess to signal
+//		# signal (int) 		: the signal to send to the specified process
+//
 int ctrl_process(char* pid_s, int signal)
 {
 	if (pid_s == NULL)
@@ -216,27 +240,42 @@ int ctrl_process(char* pid_s, int signal)
 	else
 	{
 		int pid = atoi(pid_s);
+		// send signal to process pid
 		kill(pid, signal);
 	}
 	return 1;
 }
 
 
+// Lists all current child processes (all processes in the linked list)
+//
 int list_processes()
 {
 	int process_count = 0;
 	curr = head;
+	// iterate through linked list and print out each node/process
 	while (curr != NULL)
 	{
-		printf("%d %s\n", curr->pid, *curr->filename);
+		printf("%d: %s\n", curr->pid, *curr->filename);
 		curr = curr->next;
 		process_count++;
 	}
-	printf("Total background jobs: %d\n", process_count);
+	if (process_count == 0)
+	{
+		puts("No processes running");
+	}
+	else
+	{
+		printf("Total background jobs: %d\n", process_count);
+	}
 	return 1;
 }
 
 
+// shows statistics for given process
+// Parameters:
+// 		# pid_s (char *)	: string containing process id to show stats for
+//
 int process_stats(char *pid_s)
 {	
 	if (pid_s == NULL)
@@ -248,22 +287,23 @@ int process_stats(char *pid_s)
 		int pid = atoi(pid_s);
 		if (contains(pid))
 		{	
-			char comm[BUFFER_SIZE];
+			char comm[BUFFER_SIZE], stat[BUFFER_SIZE], status[BUFFER_SIZE], state[BUFFER_SIZE];
 			long int utime, stime, vcs, nvcs;
 			int rss;
-			char state[BUFFER_SIZE];
 			FILE *proc;
-			char stat[BUFFER_SIZE];
-			char status[BUFFER_SIZE];
 
+			// create strings containing file paths to stat and status proc files
 			sprintf(stat, "/proc/%d/stat", pid);
 			sprintf(status, "/proc/%d/status", pid);
+
 			proc = fopen(stat, "r");
 			if (!proc)
 			{
 				fprintf(stderr, "Error: could not open stat file for process %d\n", pid);
 				return 1;
 			}
+
+			// read comm, utime, stime, and rss from stat proc file into their variables
 			fscanf(proc, "%*d %s %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %lu %lu %*d %*d %*d %*d %*d %*d %*u %*u %d", comm, &utime, &stime, &rss);
 			fclose(proc);
 
@@ -275,9 +315,14 @@ int process_stats(char *pid_s)
 			
 			char buffer[BUFFER_SIZE];
 			char *token;
+			
+			// read from status proc file until required variables are found
 			while(1)
 			{
+				// read in next line from status file
 				fgets(buffer, BUFFER_SIZE, proc);
+
+				// parse and evaluate read line, and save if it contains a required variable
 				token = strtok(buffer, ":");
 				if (!strcmp(token, "State"))
 				{
@@ -295,9 +340,10 @@ int process_stats(char *pid_s)
 				}
 			}
 
-
 			stime /= (float) sysconf(_SC_CLK_TCK);
 			utime /= (float) sysconf(_SC_CLK_TCK); 
+
+			// print out stats
 			printf("comm: %s\nstate: %s\nutime: %lu\nstime: %lu\nrss: %d\nvoluntary_ctxt_switches: %lu\nnonvoluntary_ctxt_switches: %lu\n", comm, state, utime, stime, rss, vcs, nvcs);
 		}
 		else
@@ -307,6 +353,7 @@ int process_stats(char *pid_s)
 	}
 	return 1;
 }
+
 
 
 
